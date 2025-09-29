@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ollama-search: search/inspect Ollama Library from the terminal.
+# ollama-cli: search/inspect Ollama Library from the terminal.
 # Requires: curl, grep, awk, sed
 set -euo pipefail
 
@@ -22,20 +22,20 @@ msg() {
       case "$key" in
         USAGE) cat <<'EOF'
 Uso:
-  ollama-search search <texto|modelo> [--limit N] [--lang en|es]
+  ollama-cli search <texto|modelo> [--limit N] [--lang en|es]
      - Busca modelos en la librería web y muestra líneas "modelo:tag".
      - Si <texto> es un nombre de modelo exacto, lista todas sus tags.
 
-  ollama-search exists <modelo>
+  ollama-cli exists <modelo>
      - Devuelve "yes"/"no" si existe en la librería remota.
 
-  ollama-search tags <modelo>
+  ollama-cli tags <modelo>
      - Lista sólo las tags de ese modelo (una por línea).
 
-  ollama-search pull <modelo[:tag]>
+  ollama-cli pull <modelo[:tag]>
      - Hace "ollama pull" si existe y no está instalado.
 
-  ollama-search installed
+  ollama-cli installed
      - Muestra modelos locales (equivale a "ollama list").
 
 Opciones:
@@ -56,20 +56,20 @@ EOF
       case "$key" in
         USAGE) cat <<'EOF'
 Usage:
-  ollama-search search <text|model> [--limit N] [--lang en|es]
+  ollama-cli search <text|model> [--limit N] [--lang en|es]
      - Searches the web library and prints "model:tag" lines.
      - If <text> is an exact model name, prints all its tags.
 
-  ollama-search exists <model>
+  ollama-cli exists <model>
      - Prints "yes"/"no" if the model exists in the remote library.
 
-  ollama-search tags <model>
+  ollama-cli tags <model>
      - Prints tags of the model (one per line).
 
-  ollama-search pull <model[:tag]>
+  ollama-cli pull <model[:tag]>
      - Runs "ollama pull" if it exists and isn't installed.
 
-  ollama-search installed
+  ollama-cli installed
      - Shows local models (same as "ollama list").
 
 Options:
