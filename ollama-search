@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HOST=${OLLAMA_LIBRARY_HOST:-https://ollama.com}
+LIB="$HOST/library"
+SEARCH="$HOST/search"
+
+need() { command -v "$1" >/dev/null 2>&1 || { echo "Falta '$1'. Instálalo y reintenta." >&2; exit 1; }; }
+need curl
+
+usage() { cat <<EOF
+ollama-find: busca modelos de la librería web de Ollama desde la terminal.
+Uso:
+  $0 search <texto>         # Busca modelos por nombre
+  $0 tags <modelo>          # Lista etiquetas (tags) de un modelo (p.ej. llama3.1)
+  $0 exists <modelo>        # Verifica si un modelo existe en la librería
+  $0 pull <modelo[:tag]>    # Hace pull si existe y no está instalado
+  $0 installed              # Muestra modelos instalados (ollama list)
+Vars:
+  OLLAMA_LIBRARY_HOST       # Host de la librería (default $HOST)
+EOF
+}
+
+parse_models() {
+  # Extrae /library/<nombre> del HTML y normaliza
+  grep -oE '/library/[a-zA-Z0-9._:-]+' \
+  | sed 's#/library/##' \
+  | sed 's#:$##' \
+  | sort -u
+}
+
+search_models() {
+  local q="${1:-}"; [[ -z "$q" ]] && { echo "Falta texto a buscar" >&2; exit 1; }
+  if html=$(curl -fsSL "$SEARCH?q=$(printf %s "$q" | sed 's/ /%20/g')"); then
+    echo "$html" | parse_models
+  else
+    curl -fsSL "$LIB" | parse_models | grep -i "$q" || true
+  fi
+}
+
+exists_model() {
+  local m="$1"
+  code=$(curl -s -o /dev/null -w '%{http_code}' "$LIB/$m")
+  [[ "$code" == "200" ]]
+}
+
+list_tags() {
+  local m="$1"
+  curl -fsSL "$LIB/$m" \
+  | grep -oE "${m}:[a-zA-Z0-9._-]+" \
+  | sed "s#^${m}:##" \
+  | sort -u
+}
+
+case "${1:-}" in
+  search)
+    need grep; need sed; need awk
+    search_models "${2:-}"
+    ;;
+  tags)
+    [[ -z "${2:-}" ]] && { echo "Uso: $0 tags <modelo>"; exit 1; }
+    exists_model "$2" || { echo "No encontrado en $LIB/$2"; exit 2; }
+    list_tags "$2" | awk '{printf "- %s\n",$0}'
+    ;;
+  exists)
+    [[ -z "${2:-}" ]] && { echo "Uso: $0 exists <modelo>"; exit 1; }
+    if exists_model "$2"; then echo "sí"; else echo "no"; fi
+    ;;
+  pull)
+    [[ -z "${2:-}" ]] && { echo "Uso: $0 pull <modelo[:tag]>"; exit 1; }
+    if command -v ollama >/dev/null 2>&1; then
+      if ollama list 2>/dev/null | awk '{print $1}' | grep -qx "${2}"; then
+        echo "Ya instalado: ${2}"; exit 0
+      fi
+    fi
+    base="${2%%:*}"
+    exists_model "$base" || { echo "Modelo no encontrado en la librería: $base"; exit 2; }
+    echo "Descargando ${2}..."
+    exec ollama pull "${2}"
+    ;;
+  installed)
+    exec ollama list
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "Comando no reconocido: $1"; usage; exit 1;;
+esac
