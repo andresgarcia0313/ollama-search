@@ -45,13 +45,13 @@ Opciones:
 Notas:
   - No hay endpoint oficial para listar el catálogo remoto; se usa HTML de /search y /library/<modelo>.
 EOF
-        ;;
-        NOT_FOUND) echo "No encontrado en la librería:" ;;
-        DOWNLOADING) echo "Descargando" ;;
-        INSTALLED) echo "Ya instalado:" ;;
-        NEED_ARG) echo "Falta argumento." ;;
+        ;; 
+        NOT_FOUND) echo "No encontrado en la librería:" ;; 
+        DOWNLOADING) echo "Descargando" ;; 
+        INSTALLED) echo "Ya instalado:" ;; 
+        NEED_ARG) echo "Falta argumento." ;; 
       esac
-      ;;
+      ;; 
     *) # en
       case "$key" in
         USAGE) cat <<'EOF'
@@ -79,14 +79,14 @@ Options:
 Notes:
   - There is no official endpoint to list the remote catalog; this scrapes /search and /library/<model>.
 EOF
-        ;;
-        NOT_FOUND) echo "Not found in library:" ;;
-        DOWNLOADING) echo "Downloading" ;;
-        INSTALLED) echo "Already installed:" ;;
-        NEED_ARG) echo "Missing argument." ;;
+        ;; 
+        NOT_FOUND) echo "Not found in library:" ;; 
+        DOWNLOADING) echo "Downloading" ;; 
+        INSTALLED) echo "Already installed:" ;; 
+        NEED_ARG) echo "Missing argument." ;; 
       esac
-      ;;
-  esac
+      ;; 
+esac
 }
 
 usage() { msg USAGE; }
@@ -123,76 +123,100 @@ list_tags() {
 
 search_models() {
   local q="$1"
-  local enc; enc=$(urlencode "$q")
-  if html=$(curl -fsSL "$SEARCH_URL?q=$enc"); then
-    echo "$html" | parse_models
-  else
-    # Fallback: list library and fuzzy-filter
-    curl -fsSL "$LIB" | parse_models | grep -i "$q" || true
-  fi
+  # The site's search (?q=) is too broad, matching descriptions and returning
+  # unrelated models. It's more reliable to get the full list from the library
+  # and filter it by name with grep.
+  curl -fsSL "$LIB" | parse_models | grep -i "$q" || true
 }
 
-print_model_tags_lines() {
-  # Prints "model:tag" lines; if no tags found, print "model:latest"
+print_model_details() {
   local m="$1"
-  local found=0
+  local html
+  # Fetch model page, exit on failure
+  html=$(curl -fsSL "$LIB/$m") || return
+
+  # To improve parsing, add newlines after some tags
+  local parsable_html
+  parsable_html=$(echo "$html" | sed 's#</a>#</a>\n#g; s#</span>#</span>\n#g; s#</div>#</div>\n#g')
+
+  local tags
+  tags=$(echo "$html" | grep -oE "${m}:[a-zA-Z0-9._-]+" | awk -F: '{print $2}' | sort -u)
+
+  if [[ -z "$tags" ]]; then
+    # Fallback for models with no explicit tags found on the page
+    echo -e "${m}\tlatest\tN/A\tN/A"
+    return
+  fi
+
   while IFS= read -r tag; do
     [[ -z "$tag" ]] && continue
-    echo "${m}:${tag}"
-    found=1
-  done < <(list_tags "$m" || true)
 
-  if [[ "$found" -eq 0 ]]; then
-    # As a fallback, at least print the model name
-    echo "${m}:latest"
-  fi
+    # Get the HTML block for this specific tag to find details
+    local context
+    context=$(echo "$parsable_html" | grep -A 20 "href=\"/library/${m}:${tag}\"")
+
+    # Best-effort extraction of parameter size (e.g., 7B, 70B)
+    local params
+    params=$(echo "$context" | grep -ioE '[0-9.]+B' | head -n 1)
+
+    # Best-effort extraction of file size (e.g., 3.8 GB)
+    local size
+    size=$(echo "$context" | grep -ioE '[0-9.]+\s*[MG]B' | head -n 1)
+
+    echo -e "${m}\t${tag}\t${params:-N/A}\t${size:-N/A}"
+  done <<< "$tags"
 }
 
 # --- arg parsing (simple) ---
 ARGS=()
 while [[ "${1:-}" != "" ]]; do
   case "$1" in
-    --lang) LANG_CHOICE="${2:-en}"; shift 2;;
-    --lang=*) LANG_CHOICE="${1#*=}"; shift;;
-    --limit) LIMIT="${2:-50}"; shift 2;;
-    --limit=*) LIMIT="${1#*=}"; shift;;
-    -h|--help|help) usage; exit 0;;
-    *) ARGS+=("$1"); shift;;
+    --lang) LANG_CHOICE="${2:-en}"; shift 2;; 
+    --lang=*) LANG_CHOICE="${1#*=}"; shift;; 
+    --limit) LIMIT="${2:-50}"; shift 2;; 
+    --limit=*) LIMIT="${1#*=}"; shift;; 
+    -h|--help|help) usage; exit 0;; 
+    *) ARGS+=("$1"); shift;; 
   esac
 done
 set -- "${ARGS[@]:-}"
 
-cmd="${1:-}"
-arg="${2:-}"
+cmd="${1:-""}"
+arg="${2:-""}"
 
 case "$cmd" in
   search)
     [[ -z "$arg" ]] && { msg NEED_ARG; echo; usage; exit 1; }
 
-    # If it's an exact model page, just print its tags (model:tag)
-    if exists_model "$arg"; then
-      print_model_tags_lines "$arg"
-      exit 0
-    fi
+    # Search and expand tags for each model found (up to LIMIT)
+    results=$(
+      count=0
+      while IFS= read -r m; do
+        [[ -z "$m" ]] && continue
+        print_model_details "$m" &
+        count=$((count+1))
+        [[ "$count" -ge "$LIMIT" ]] && break
+      done < <(search_models "$arg")
+      wait
+    )
 
-    # Otherwise, search and expand tags for each model (up to LIMIT)
-    count=0
-    while IFS= read -r m; do
-      [[ -z "$m" ]] && continue
-      print_model_tags_lines "$m"
-      count=$((count+1))
-      [[ "$count" -ge "$LIMIT" ]] && break
-    done < <(search_models "$arg")
-    ;;
+    if [[ -n "$results" ]]; then
+      (
+        echo -e "MODEL\tTAG\tPARAMS\tSIZE"
+        # Sort results to keep output consistent
+        echo "$results" | sort
+      ) | column -t -s $'	'
+    fi
+    ;; 
   tags)
     [[ -z "$arg" ]] && { msg NEED_ARG; exit 1; }
     exists_model "$arg" || { msg NOT_FOUND; echo "  $LIB/$arg"; exit 2; }
     list_tags "$arg"
-    ;;
+    ;; 
   exists)
     [[ -z "$arg" ]] && { msg NEED_ARG; exit 1; }
     if exists_model "$arg"; then echo "yes"; else echo "no"; fi
-    ;;
+    ;; 
   pull)
     [[ -z "$arg" ]] && { msg NEED_ARG; exit 1; }
     if command -v ollama >/dev/null 2>&1; then
@@ -202,15 +226,15 @@ case "$cmd" in
     fi
     base="${arg%%:*}"
     exists_model "$base" || { msg NOT_FOUND; echo "  $LIB/$base"; exit 2; }
-    msg DOWNLOADING; echo " ${arg}..."
+    msg DOWNLOADING; echo " ${arg}...";
     exec ollama pull "${arg}"
-    ;;
+    ;; 
   installed)
     exec ollama list
-    ;;
+    ;; 
   ""|-h|--help|help)
     usage
-    ;;
+    ;; 
   *)
-    usage; exit 1;;
+    usage; exit 1;; 
 esac
